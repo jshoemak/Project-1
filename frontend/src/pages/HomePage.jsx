@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { Link, useLocation } from 'react-router-dom'
 import { useApi } from '../hooks/useApi'
 import { formatCurrency } from '../utils/format'
 import PerformanceChart from '../components/PerformanceChart'
@@ -10,12 +10,25 @@ export default function HomePage() {
   const { data: holdings, loading, refetch } = useApi('/holdings')
   const { data: signals } = useApi('/signals?min_score=60')
   const [showAdd, setShowAdd] = useState(false)
+  const [prefill, setPrefill] = useState({})
+  const location = useLocation()
+
+  // Open add form pre-filled when navigated from signals
+  useEffect(() => {
+    if (location.state?.prefill) {
+      setPrefill(location.state.prefill)
+      setShowAdd(true)
+      // Clear state so refresh doesn't re-open
+      window.history.replaceState({}, '')
+    }
+  }, [location.state])
 
   const highSignals = signals?.filter((s) => s.conviction_score >= 80) ?? []
   const allHoldings = holdings ?? []
 
   const handleAdded = () => {
     setShowAdd(false)
+    setPrefill({})
     refetch()
   }
 
@@ -23,7 +36,7 @@ export default function HomePage() {
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-6 space-y-6">
-      {/* Signal indicator — subtle amber dot, not a banner */}
+      {/* Signal indicator */}
       {highSignals.length > 0 && (
         <Link
           to="/signals"
@@ -46,7 +59,7 @@ export default function HomePage() {
         <div className="flex items-center justify-between mb-3">
           <p className="section-label">Holdings</p>
           <button
-            onClick={() => setShowAdd((x) => !x)}
+            onClick={() => { setShowAdd((x) => !x); if (showAdd) setPrefill({}) }}
             className="btn-primary text-xs"
           >
             {showAdd ? 'Cancel' : '+ Add Position'}
@@ -55,8 +68,9 @@ export default function HomePage() {
 
         {showAdd && (
           <AddHoldingForm
+            prefill={prefill}
             onAdded={handleAdded}
-            onCancel={() => setShowAdd(false)}
+            onCancel={() => { setShowAdd(false); setPrefill({}) }}
           />
         )}
 
@@ -82,10 +96,7 @@ export default function HomePage() {
 }
 
 function PortfolioHeader({ holdings }) {
-  // We use the API ticker charts to compute total value — simplified here
-  // Real-time value computed in HoldingRow; for the header we show cost basis as fallback
   const totalCost = holdings.reduce((s, h) => s + h.shares * h.avg_cost, 0)
-
   return (
     <div>
       <p className="section-label">Total Portfolio</p>

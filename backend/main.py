@@ -3,12 +3,13 @@ import json
 import logging
 import os
 import sys
+import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -23,8 +24,8 @@ app = FastAPI(title="Congress Trade Tracker API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -224,10 +225,21 @@ class HoldingCreate(BaseModel):
     shares: float
     avg_cost: float
     sector: str = ""
+    purchase_date: str = ""
 
 
 class SourceConnect(BaseModel):
     api_key: str
+
+
+class ProfileUpdate(BaseModel):
+    name: str = ""
+    email: str = ""
+    weights: dict = {}
+
+
+class LoginRequest(BaseModel):
+    email: str
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -327,9 +339,10 @@ def get_holdings():
 @app.post("/api/holdings")
 def add_holding(body: HoldingCreate):
     conn = db()
+    purchase_date = body.purchase_date or datetime.now().strftime("%Y-%m-%d")
     cur = conn.execute(
-        "INSERT INTO holdings (ticker, name, shares, avg_cost, sector) VALUES (?,?,?,?,?)",
-        (body.ticker.upper(), body.name, body.shares, body.avg_cost, body.sector),
+        "INSERT INTO holdings (ticker, name, shares, avg_cost, sector, purchase_date) VALUES (?,?,?,?,?,?)",
+        (body.ticker.upper(), body.name, body.shares, body.avg_cost, body.sector, purchase_date),
     )
     conn.commit()
     row = conn.execute("SELECT * FROM holdings WHERE id=?", (cur.lastrowid,)).fetchone()
@@ -378,6 +391,10 @@ def portfolio_performance(range: str = Query("30D")):
     for date in sorted(all_dates):
         total = 0.0
         for h in holdings:
+            # Only include this holding for dates >= its purchase_date
+            purchase_date = h["purchase_date"] or ""
+            if purchase_date and date < purchase_date:
+                continue
             hist = ticker_histories.get(h["ticker"], [])
             price = next((d["close"] for d in hist if d["date"] == date), None)
             if price:
@@ -386,6 +403,22 @@ def portfolio_performance(range: str = Query("30D")):
             result.append({"date": date, "value": round(total, 2)})
 
     return result
+
+
+@app.get("/api/ticker/{ticker}/info")
+def ticker_info(ticker: str):
+    """Quick lookup: company name, current price, and sector for auto-fill."""
+    ticker = ticker.upper()
+    provider = get_stock_provider()
+    fundamentals = provider.get_fundamentals(ticker)
+    hist = provider.get_history(ticker, days=2)
+    current_price = hist[-1]["close"] if hist else None
+    return {
+        "ticker": ticker,
+        "name": fundamentals.get("name") or fundamentals.get("longName") or "",
+        "sector": fundamentals.get("sector") or "",
+        "current_price": current_price,
+    }
 
 
 @app.get("/api/ticker/{ticker}/chart")
@@ -510,8 +543,105 @@ def generate_report():
     return {"status": "ok", "pdf": str(pdf_path)}
 
 
+# ── Profile ───────────────────────────────────────────────────────────────────
+
+@app.get("/api/profile")
+def get_profile():
+    conn = db()
+    row = conn.execute("SELECT * FROM profile WHERE id=1").fetchone()
+    conn.close()
+    if not row:
+        return {"name": "", "email": "", "weights": {}}
+    weights = {}
+    try:
+        weights = json.loads(row["weights"] or "{}")
+    except Exception:
+        pass
+    return {"name": row["name"] or "", "email": row["email"] or "", "weights": weights}
+
+
+@app.put("/api/profile")
+def update_profile(body: ProfileUpdate):
+    conn = db()
+    conn.execute(
+        """INSERT INTO profile (id, name, email, weights, updated_at)
+           VALUES (1, ?, ?, ?, CURRENT_TIMESTAMP)
+           ON CONFLICT(id) DO UPDATE SET
+             name=excluded.name,
+             email=excluded.email,
+             weights=excluded.weights,
+             updated_at=excluded.updated_at""",
+        (body.name, body.email, json.dumps(body.weights)),
+    )
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+# ── Auth ──────────────────────────────────────────────────────────────────────
+
+def _get_profile_email() -> str:
+    conn = db()
+    row = conn.execute("SELECT email FROM profile WHERE id=1").fetchone()
+    conn.close()
+    return (row["email"] or "").strip() if row else ""
+
+
+@app.post("/api/auth/login")
+def auth_login(body: LoginRequest):
+    profile_email = _get_profile_email()
+    # First-run: no email configured yet — allow any email to bootstrap
+    if profile_email and body.email.strip().lower() != profile_email.lower():
+        raise HTTPException(status_code=401, detail="Email does not match profile.")
+    token = str(uuid.uuid4())
+    expires = datetime.now() + timedelta(days=30)
+    conn = db()
+    # Clean up expired sessions
+    conn.execute("DELETE FROM sessions WHERE expires_at < CURRENT_TIMESTAMP")
+    conn.execute(
+        "INSERT INTO sessions (token, email, expires_at) VALUES (?,?,?)",
+        (token, body.email.strip(), expires.isoformat()),
+    )
+    conn.commit()
+    conn.close()
+    return {"token": token, "email": body.email.strip()}
+
+
+@app.get("/api/auth/me")
+def auth_me(authorization: Optional[str] = Header(None)):
+    token = _extract_token(authorization)
+    # Allow the local_setup placeholder token
+    if token == "local_setup":
+        return {"email": "", "setup_required": True}
+    conn = db()
+    row = conn.execute(
+        "SELECT * FROM sessions WHERE token=? AND expires_at > CURRENT_TIMESTAMP",
+        (token,),
+    ).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(status_code=401, detail="Invalid or expired session.")
+    return {"email": row["email"]}
+
+
+@app.post("/api/auth/logout")
+def auth_logout(authorization: Optional[str] = Header(None)):
+    token = _extract_token(authorization)
+    conn = db()
+    conn.execute("DELETE FROM sessions WHERE token=?", (token,))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+def _extract_token(authorization: Optional[str]) -> str:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing auth token.")
+    return authorization.split(" ", 1)[1]
+
+
 if __name__ == "__main__":
     import uvicorn
-    host = os.getenv("API_HOST", "127.0.0.1")
+    host = os.getenv("API_HOST", "0.0.0.0")
     port = int(os.getenv("API_PORT", "8000"))
     uvicorn.run("main:app", host=host, port=port, reload=False)

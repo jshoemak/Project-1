@@ -2,9 +2,18 @@ import { useState, useEffect, useCallback } from 'react'
 
 const BASE = '/api'
 
+function getToken() {
+  return localStorage.getItem('ct_token') || ''
+}
+
 async function apiFetch(path, options = {}) {
+  const token = getToken()
   const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...options.headers },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...options.headers,
+    },
     ...options,
   })
   if (!res.ok) {
@@ -43,5 +52,6 @@ export function useApi(path, deps = []) {
 export const api = {
   get: (path) => apiFetch(path),
   post: (path, body) => apiFetch(path, { method: 'POST', body: JSON.stringify(body) }),
+  put: (path, body) => apiFetch(path, { method: 'PUT', body: JSON.stringify(body) }),
   del: (path) => apiFetch(path, { method: 'DELETE' }),
 }

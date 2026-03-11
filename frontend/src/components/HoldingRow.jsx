@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { formatCurrency, formatPercent } from '../utils/format'
+import { formatCurrency, formatPercent, formatDate } from '../utils/format'
 import { useApi, api } from '../hooks/useApi'
 import TickerChart from './TickerChart'
 
@@ -30,6 +30,8 @@ export default function HoldingRow({ holding, onDelete }) {
     }
   }
 
+  const financeUrl = `https://finance.yahoo.com/quote/${holding.ticker}`
+
   return (
     <div className="border border-navy-700 rounded-lg overflow-hidden">
       <div
@@ -38,7 +40,15 @@ export default function HoldingRow({ holding, onDelete }) {
       >
         {/* Ticker */}
         <div className="w-20">
-          <p className="font-mono font-semibold text-slate-100">{holding.ticker}</p>
+          <a
+            href={financeUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="font-mono font-semibold text-accent hover:underline"
+          >
+            {holding.ticker}
+          </a>
           <p className="text-xs text-slate-500 truncate">{holding.name || '—'}</p>
         </div>
 
@@ -103,6 +113,7 @@ export default function HoldingRow({ holding, onDelete }) {
               <div className="space-y-2 text-sm">
                 <Row label="Shares" value={holding.shares.toLocaleString()} />
                 <Row label="Avg Cost" value={formatCurrency(holding.avg_cost)} />
+                <Row label="Purchase Date" value={holding.purchase_date ? formatDate(holding.purchase_date) : '—'} />
                 <Row label="Current Price" value={currentPrice ? formatCurrency(currentPrice) : '—'} />
                 <Row label="Position Value" value={positionValue ? formatCurrency(positionValue) : '—'} />
                 <Row

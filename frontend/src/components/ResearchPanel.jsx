@@ -1,10 +1,27 @@
+import { useNavigate } from 'react-router-dom'
 import { useApi } from '../hooks/useApi'
 import { formatCurrency, formatDate, formatAmountRange, formatPercent } from '../utils/format'
 import TickerChart from './TickerChart'
 
-export default function ResearchPanel({ ticker }) {
+export default function ResearchPanel({ ticker, signal, currentPrice }) {
   const { data: detail, loading } = useApi(`/signals/${ticker}`, [ticker])
   const { data: fundamentals } = useApi(`/ticker/${ticker}/fundamentals`, [ticker])
+  const navigate = useNavigate()
+
+  const financeUrl = `https://finance.yahoo.com/quote/${ticker}`
+
+  const handleAddToPortfolio = () => {
+    navigate('/', {
+      state: {
+        prefill: {
+          ticker,
+          name: fundamentals?.name || '',
+          avg_cost: currentPrice ? currentPrice.toFixed(2) : '',
+          sector: fundamentals?.sector || '',
+        },
+      },
+    })
+  }
 
   if (loading) {
     return (
@@ -22,13 +39,23 @@ export default function ResearchPanel({ ticker }) {
 
   return (
     <div className="bg-navy-900 border-t border-navy-700 p-4 space-y-5">
-      {/* Catalyst summary */}
-      {detail.reasoning && (
-        <div className="border-l-2 border-accent pl-4 py-1">
-          <p className="text-xs text-slate-400 uppercase tracking-wider mb-1">Catalyst</p>
-          <p className="text-sm text-slate-300 leading-relaxed">{detail.reasoning}</p>
+      {/* Add to Portfolio button */}
+      <div className="flex items-center justify-between">
+        <div className="border-l-2 border-accent pl-4 py-1 flex-1">
+          {detail.reasoning && (
+            <>
+              <p className="text-xs text-slate-400 uppercase tracking-wider mb-1">Catalyst</p>
+              <p className="text-sm text-slate-300 leading-relaxed">{detail.reasoning}</p>
+            </>
+          )}
         </div>
-      )}
+        <button
+          onClick={handleAddToPortfolio}
+          className="ml-4 btn-primary text-sm whitespace-nowrap"
+        >
+          + Add to Portfolio
+        </button>
+      </div>
 
       {/* Chart + Fundamentals */}
       <div className="grid grid-cols-2 gap-4">

@@ -99,19 +99,35 @@ def init_db():
         );
 
         CREATE TABLE IF NOT EXISTS holdings (
-            id        INTEGER PRIMARY KEY AUTOINCREMENT,
-            ticker    TEXT NOT NULL,
-            name      TEXT,
-            shares    REAL NOT NULL,
-            avg_cost  REAL NOT NULL,
-            sector    TEXT,
-            added_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticker        TEXT NOT NULL,
+            name          TEXT,
+            shares        REAL NOT NULL,
+            avg_cost      REAL NOT NULL,
+            sector        TEXT,
+            purchase_date DATE,
+            added_at      DATETIME DEFAULT CURRENT_TIMESTAMP
         );
 
         CREATE TABLE IF NOT EXISTS config (
             key        TEXT PRIMARY KEY,
             value      TEXT,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS profile (
+            id         INTEGER PRIMARY KEY CHECK (id = 1),
+            name       TEXT DEFAULT '',
+            email      TEXT DEFAULT '',
+            weights    TEXT DEFAULT '{}',
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS sessions (
+            token      TEXT PRIMARY KEY,
+            email      TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            expires_at DATETIME NOT NULL
         );
 
         CREATE INDEX IF NOT EXISTS idx_trades_ticker      ON trades(ticker);
@@ -141,6 +157,14 @@ def init_db():
         cur.execute(
             "INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)", (key, val)
         )
+
+    # Migrations for existing databases
+    cols = [r[1] for r in cur.execute("PRAGMA table_info(holdings)").fetchall()]
+    if "purchase_date" not in cols:
+        cur.execute("ALTER TABLE holdings ADD COLUMN purchase_date DATE")
+
+    # Seed default profile row
+    cur.execute("INSERT OR IGNORE INTO profile (id, name, email, weights) VALUES (1, '', '', '{}')")
 
     conn.commit()
     conn.close()

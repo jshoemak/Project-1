@@ -46,6 +46,7 @@ class YahooFinanceProvider(StockDataProvider):
             t = yf.Ticker(ticker)
             info = t.info
             return {
+                "name": info.get("longName") or info.get("shortName") or "",
                 "market_cap": info.get("marketCap"),
                 "pe_ratio": info.get("trailingPE"),
                 "week52_high": info.get("fiftyTwoWeekHigh"),
